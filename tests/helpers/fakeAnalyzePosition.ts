@@ -1,9 +1,10 @@
-const { Chess } = require('chess.js');
-const { moveToUci } = require('../../ParsePgn');
+import { Chess, Move } from 'chess.js';
+import { moveToUci } from '../../ParsePgn';
+import { AnalysisResult, AnalysisRequest, ParsedInfoLine } from '../../StockfishEngine';
 
-async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }) {
+export async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }: AnalysisRequest): Promise<AnalysisResult> {
   const chess = new Chess(fen);
-  const legalMoves = chess.moves({ verbose: true });
+  const legalMoves: Move[] = chess.moves({ verbose: true });
 
   if (legalMoves.length === 0) {
     return {
@@ -15,9 +16,9 @@ async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }) {
     };
   }
 
-  const rankedMoves = legalMoves.slice(0, Math.max(multiPv, 1)).map((move, index) => {
-    const evaluation = Number((1.8 - index * 0.35).toFixed(2));
-    const bestMove = moveToUci(move);
+  const rankedMoves: ParsedInfoLine[] = legalMoves.slice(0, Math.max(multiPv, 1)).map((move, index) => {
+    const evaluation: number = Number((1.8 - index * 0.35).toFixed(2));
+    const bestMove: string = moveToUci(move);
 
     return {
       rank: index + 1,
@@ -29,9 +30,9 @@ async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }) {
   });
 
   if (searchMoves.length > 0) {
-    const searchedMove = searchMoves[0];
-    const matchesBest = searchedMove === rankedMoves[0].bestMove;
-    const evaluation = matchesBest ? rankedMoves[0].evaluation : 0.25;
+    const searchedMove: string = searchMoves[0];
+    const matchesBest: boolean = searchedMove === rankedMoves[0].bestMove;
+    const evaluation: number = matchesBest ? rankedMoves[0].evaluation : 0.25;
 
     return {
       bestMove: searchedMove,
@@ -58,7 +59,3 @@ async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }) {
     multiPv: rankedMoves,
   };
 }
-
-module.exports = {
-  fakeAnalyzePosition,
-};

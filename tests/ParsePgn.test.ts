@@ -1,4 +1,4 @@
-const { parseUploadedFiles, splitPgnGames } = require('../ParsePgn');
+import { parseUploadedFiles, splitPgnGames } from '../ParsePgn';
 
 const sampleMultiGamePgn = `[Event "Game One"]
 [Site "Local"]
