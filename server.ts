@@ -1,19 +1,19 @@
-const express = require('express');
-const multer = require('multer');
-const { z } = require('zod');
-const { analyzeGames, DEFAULT_DEPTH, DEFAULT_ERROR_THRESHOLD, DEFAULT_MULTIPV } = require('./AnalyzeGames');
-const { parseUploadedFiles } = require('./ParsePgn');
-const { analyzePosition } = require('./StockfishEngine');
-const {
+import express, { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
+import { z } from 'zod';
+import { analyzeGames, DEFAULT_DEPTH, DEFAULT_ERROR_THRESHOLD, DEFAULT_MULTIPV } from './AnalyzeGames';
+import { parseUploadedFiles } from './ParsePgn';
+import { analyzePosition } from './StockfishEngine';
+import {
   getStateSnapshot,
   getTrainingSession,
   getTrainingStats,
   recordTrainingAttempt,
   replaceAnalysisData,
-} = require('./TrainingStore');
+} from './TrainingStore';
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT: string | number = process.env.PORT || 5001;
 
 const analysisConfig = {
   depth: DEFAULT_DEPTH,
@@ -41,7 +41,7 @@ const trainingAttemptBodySchema = z.object({
 
 app.use(express.json());
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     analysisConfig,
@@ -49,41 +49,45 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.post('/api/upload-pgns', upload.array('files', 10), async (req, res, next) => {
+app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'Upload at least one PGN file.' });
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      res.status(400).json({ error: 'Upload at least one PGN file.' });
+      return;
     }
 
     console.log(
-      `[${new Date().toISOString()}] [upload] received ${req.files.length} file(s): ${req.files
+      `[${new Date().toISOString()}] [upload] received ${files.length} file(s): ${files
         .map((file) => file.originalname)
         .join(', ')}`
     );
 
-    const invalidFiles = req.files.filter(
+    const invalidFiles = files.filter(
       (file) => !file.originalname.toLowerCase().endsWith('.pgn')
     );
 
     if (invalidFiles.length > 0) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Only .pgn files are allowed.',
         invalidFiles: invalidFiles.map((file) => file.originalname),
       });
+      return;
     }
 
-    const parsedUpload = parseUploadedFiles(req.files);
+    const parsedUpload = parseUploadedFiles(files);
 
     console.log(
       `[${new Date().toISOString()}] [upload] parsed games=${parsedUpload.games.length} parseErrors=${parsedUpload.errors.length}`
     );
 
     if (parsedUpload.games.length === 0) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'No valid PGN games were parsed from the upload.',
         uploadedFiles: parsedUpload.uploadedFiles,
         errors: parsedUpload.errors,
       });
+      return;
     }
 
     const analysis = await analyzeGames(parsedUpload.games, {
@@ -103,7 +107,7 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req, res, next) =
       trainingPositions: analysis.trainingPositions,
     });
 
-    return res.json({
+    res.json({
       uploadedFiles: parsedUpload.uploadedFiles,
       errors: parsedUpload.errors,
       games: parsedUpload.games,
@@ -112,11 +116,11 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req, res, next) =
       trainingSession: getTrainingSession(),
     });
   } catch (error) {
-    return next(error);
+    next(error);
   }
 });
 
-app.get('/api/training-session', (req, res, next) => {
+app.get('/api/training-session', (req: Request, res: Response, next: NextFunction) => {
   try {
     const { limit } = trainingSessionQuerySchema.parse(req.query);
 
@@ -126,7 +130,7 @@ app.get('/api/training-session', (req, res, next) => {
   }
 });
 
-app.post('/api/training-attempts', (req, res, next) => {
+app.post('/api/training-attempts', (req: Request, res: Response, next: NextFunction) => {
   try {
     const body = trainingAttemptBodySchema.parse(req.body);
     const result = recordTrainingAttempt(body);
@@ -137,49 +141,51 @@ app.post('/api/training-attempts', (req, res, next) => {
   }
 });
 
-app.get('/api/training-stats', (_req, res) => {
+app.get('/api/training-stats', (_req: Request, res: Response) => {
   res.json(getTrainingStats());
 });
 
-app.get('/api/state', (_req, res) => {
+app.get('/api/state', (_req: Request, res: Response) => {
   res.json(getStateSnapshot());
 });
 
-app.use((error, _req, res, _next) => {
+app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'Each PGN file must be 5MB or smaller.' });
+      res.status(400).json({ error: 'Each PGN file must be 5MB or smaller.' });
+      return;
     }
 
     if (error.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({ error: 'Upload between 1 and 10 PGN files.' });
+      res.status(400).json({ error: 'Upload between 1 and 10 PGN files.' });
+      return;
     }
 
-    return res.status(400).json({ error: error.message });
+    res.status(400).json({ error: error.message });
+    return;
   }
 
   if (error instanceof z.ZodError) {
-    return res.status(400).json({
+    res.status(400).json({
       error: 'Invalid request payload.',
       details: error.flatten(),
     });
+    return;
   }
 
   if (typeof error.message === 'string' && error.message.startsWith('Unknown training position:')) {
-    return res.status(404).json({ error: error.message });
+    res.status(404).json({ error: error.message });
+    return;
   }
 
   console.error(error);
-  return res.status(500).json({
+  res.status(500).json({
     error: 'Internal server error.',
     details: error.message,
   });
 });
 
-module.exports = {
-  app,
-  analysisConfig,
-};
+export { app, analysisConfig };
 
 if (require.main === module) {
   app.listen(PORT, () => {

@@ -1,6 +1,6 @@
-const { analyzeGames } = require('../AnalyzeGames');
-const { parseUploadedFiles } = require('../ParsePgn');
-const { fakeAnalyzePosition } = require('./helpers/fakeAnalyzePosition');
+import { analyzeGames } from '../AnalyzeGames';
+import { parseUploadedFiles } from '../ParsePgn';
+import { fakeAnalyzePosition } from './helpers/fakeAnalyzePosition';
 
 const samplePgn = `[Event "Training Sample"]
 [Site "Local"]

@@ -1,48 +1,38 @@
-const { spawn } = require('child_process');
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 
-const ANALYSIS_LOGGING_ENABLED = process.env.ANALYSIS_LOG !== '0';
-const DEFAULT_TIMEOUT_MS = Number(process.env.STOCKFISH_ANALYSIS_TIMEOUT_MS || 1000000);
+const ANALYSIS_LOGGING_ENABLED: boolean = process.env.ANALYSIS_LOG !== '0';
+const DEFAULT_TIMEOUT_MS: number = Number(process.env.STOCKFISH_ANALYSIS_TIMEOUT_MS || 1000000);
 
-/**
- * @typedef {Object} ParsedInfoLine
- * @property {number} rank
- * @property {string} bestMove
- * @property {number} evaluation
- * @property {string} evaluationText
- * @property {string[]} principalVariation
- */
+export interface ParsedInfoLine {
+  rank: number;
+  bestMove: string;
+  evaluation: number;
+  evaluationText: string;
+  principalVariation: string[];
+}
 
-/**
- * @typedef {Object} AnalysisResult
- * @property {string | null} bestMove
- * @property {number | null} evaluation
- * @property {string | null} evaluationText
- * @property {string[]} principalVariation
- * @property {ParsedInfoLine[]} multiPv
- */
+export interface AnalysisResult {
+  bestMove: string | null;
+  evaluation: number | null;
+  evaluationText: string | null;
+  principalVariation: string[];
+  multiPv: ParsedInfoLine[];
+}
 
-/**
- * @typedef {Map<number, ParsedInfoLine>} AnalysisByRank
- */
+export interface AnalysisRequest {
+  fen: string;
+  depth?: number;
+  multiPv?: number;
+  searchMoves?: string[];
+  analysisLabel?: string;
+  timeoutMs?: number;
+}
 
-/**
- * @typedef {Object} AnalysisRequest
- * @property {string} fen
- * @property {number} [depth=10]
- * @property {number} [multiPv=1]
- * @property {string[]} [searchMoves=[]]
- * @property {string} [analysisLabel='position']
- * @property {number} [timeoutMs=DEFAULT_TIMEOUT_MS]
- */
+export type AnalyzePositionFn = (options: AnalysisRequest) => Promise<AnalysisResult>;
 
 // This logs messages to the console if logging is enabled 
 
-/**
- * @param {string} message
- * @returns {void}
- */
-
-function logStockfish(message) { 
+function logStockfish(message: string): void { 
   if (!ANALYSIS_LOGGING_ENABLED) {
     return;
   }
@@ -54,21 +44,30 @@ function logStockfish(message) {
 // It stores the sign, takes the magnitude of the number, flattens to 99 and subtracts form 100
 // This means that the higher the number is the closer it is to mate, so 99 is mate in 1 
 
-/**
- * @param {number} mateIn
- * @returns {number}
- */
-function normalizeMateScore(mateIn) { 
-  const sign = Math.sign(mateIn) || 1;
+export function normalizeMateScore(mateIn: number): number { 
+  const sign: number = Math.sign(mateIn) || 1;
   return sign * (100 - Math.min(Math.abs(mateIn), 99));
 }
 
-/**
- * @param {object} queuedJob
- * @param {ReturnType<typeof setTimeout>} timeout
- * @returns {object}
- */
-function createActiveJob(queuedJob, timeout) {
+interface QueuedJob {
+  fen: string;
+  depth: number;
+  multiPv: number;
+  searchMoves: string[];
+  analysisLabel: string;
+  timeoutMs: number;
+  resolve: (result: AnalysisResult) => void;
+  reject: (error: Error) => void;
+}
+
+interface ActiveJob extends QueuedJob {
+  startedAt: number;
+  phase: 'waiting-ready' | 'searching';
+  analysisByRank: Map<number, ParsedInfoLine>;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+function createActiveJob(queuedJob: QueuedJob, timeout: ReturnType<typeof setTimeout>): ActiveJob {
   return {
     ...queuedJob,
     startedAt: Date.now(),
@@ -78,11 +77,16 @@ function createActiveJob(queuedJob, timeout) {
   };
 }
 
-/**
- * @param {object} options
- * @returns {object}
- */
-function createQueuedJob(options) {
+function createQueuedJob(options: {
+  fen: string;
+  depth: number;
+  multiPv: number;
+  searchMoves: string[];
+  analysisLabel: string;
+  timeoutMs: number;
+  resolve: (result: AnalysisResult) => void;
+  reject: (error: Error) => void;
+}): QueuedJob {
   return {
     fen: options.fen,
     depth: options.depth,
@@ -101,30 +105,25 @@ function createQueuedJob(options) {
 // Pv (line of best moves) is trimmed and split into an array bestmove is gonna be the first move in pv 
 // stockfish will either give us a score in centipawns or a mate in X, we handle both and return 
 
-/**
- * @param {string} line
- * @returns {ParsedInfoLine | null}
- */
-
-function parseInfoLine(line) { 
-  const pvMatch = line.match(/\bpv (.+)$/);
-  const scoreCpMatch = line.match(/\bscore cp (-?\d+)/);
-  const scoreMateMatch = line.match(/\bscore mate (-?\d+)/);
+export function parseInfoLine(line: string): ParsedInfoLine | null { 
+  const pvMatch: RegExpMatchArray | null = line.match(/\bpv (.+)$/);
+  const scoreCpMatch: RegExpMatchArray | null = line.match(/\bscore cp (-?\d+)/);
+  const scoreMateMatch: RegExpMatchArray | null = line.match(/\bscore mate (-?\d+)/);
 
   if (!pvMatch || (!scoreCpMatch && !scoreMateMatch)) {
     return null;
   }
 
-  const rankMatch = line.match(/\bmultipv (\d+)/);
-  const principalVariation = pvMatch[1].trim().split(/\s+/).filter(Boolean);
-  const bestMove = principalVariation[0] || null; //find bestMove with guard
+  const rankMatch: RegExpMatchArray | null = line.match(/\bmultipv (\d+)/);
+  const principalVariation: string[] = pvMatch[1].trim().split(/\s+/).filter(Boolean);
+  const bestMove: string | null = principalVariation[0] || null; //find bestMove with guard
 
   if (!bestMove) { 
     return null;
   }
 
   if (scoreCpMatch) { 
-    const evaluation = Number(scoreCpMatch[1]) / 100; // eval is divided by 100 to convert centipawns to pawns
+    const evaluation: number = Number(scoreCpMatch[1]) / 100; // eval is divided by 100 to convert centipawns to pawns
 
     return {
       rank: rankMatch ? Number(rankMatch[1]) : 1,
@@ -135,7 +134,7 @@ function parseInfoLine(line) {
     };
   }
 
-  const mateIn = Number(scoreMateMatch[1]);
+  const mateIn: number = Number(scoreMateMatch![1]);
 
   return {
     rank: rankMatch ? Number(rankMatch[1]) : 1,
@@ -149,13 +148,20 @@ function parseInfoLine(line) {
 //  creates a persistent stockfish worker class with async methods
 //  note that in ES6 methods are not declared with any keywords 
 
-class PersistentStockfishWorker {
+export class PersistentStockfishWorker {
 
-  /**
-   * @param {{stockfishPath?: string}} options
-   */
+  stockfishPath: string;
+  engine: ChildProcessWithoutNullStreams | null;
+  stdoutBuffer: string;
+  stderrBuffer: string;
+  uciReady: boolean;
+  jobQueue: QueuedJob[];
+  currentJob: ActiveJob | null;
+  startupPromise: Promise<void> | null;
+  startupResolve: (() => void) | null;
+  startupReject: ((error: Error) => void) | null;
 
-  constructor({ stockfishPath = process.env.STOCKFISH_PATH || 'stockfish' } = {}) { 
+  constructor({ stockfishPath = process.env.STOCKFISH_PATH || 'stockfish' }: { stockfishPath?: string } = {}) { 
     this.stockfishPath = stockfishPath;
     this.engine = null;
     this.stdoutBuffer = '';
@@ -170,11 +176,6 @@ class PersistentStockfishWorker {
 
   // takes the fen and other configs and pushes it into the jobQueue of positions for stockfish to analyze
   // it returns a promise stating the success or failure of analysis on that position
-  
-  /**
-   * @param {AnalysisRequest} options
-   * @returns {Promise<AnalysisResult>}
-   */
 
   async analyze({
     fen,
@@ -183,10 +184,10 @@ class PersistentStockfishWorker {
     searchMoves = [],
     analysisLabel = 'position',
     timeoutMs = DEFAULT_TIMEOUT_MS,
-  }) {
+  }: AnalysisRequest): Promise<AnalysisResult> {
     await this.ensureStarted(); //checks or starts engine
 
-    return new Promise((resolve, reject) => {
+    return new Promise<AnalysisResult>((resolve, reject) => {
       this.jobQueue.push(createQueuedJob({
         fen,
         depth,
@@ -205,10 +206,7 @@ class PersistentStockfishWorker {
   // this method makes sure that the worker is started and uciready(stockfish "im ready" output) 
   // if the worker is not ready but has a promise to startup we return that if not then the engine is spawned.
   
-  /**
-   * @returns {Promise<void>}
-   */
-  async ensureStarted() {
+  async ensureStarted(): Promise<void> {
     if (this.engine && this.uciReady) {
       return;
     }
@@ -218,7 +216,7 @@ class PersistentStockfishWorker {
     }
 
     this.spawnEngine();
-    return this.startupPromise;
+    return this.startupPromise!;
   }
 
   // this method creates a blank startupPromise
@@ -233,29 +231,26 @@ class PersistentStockfishWorker {
   // It also sends a spawn message to logStockfish to get logged in the console
   // After that it sends 'uci' (stockfish activiation command) to stockfish
 
-  /**
-   * @returns {void}
-   */
-  spawnEngine() {
+  spawnEngine(): void {
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
     this.uciReady = false;
 
-    this.startupPromise = new Promise((resolve, reject) => {
+    this.startupPromise = new Promise<void>((resolve, reject) => {
       this.startupResolve = resolve;
       this.startupReject = reject;
     });
 
-    const engine = spawn(this.stockfishPath);
+    const engine: ChildProcessWithoutNullStreams = spawn(this.stockfishPath);
     this.engine = engine;
 
-    engine.on('error', (error) => { 
+    engine.on('error', (error: Error) => { 
       this.handleEngineFailure(
         new Error(`Failed to start Stockfish at "${this.stockfishPath}": ${error.message}`)
       );
     });
 
-    engine.on('exit', (code, signal) => {   //exit code 0 is user terminated or end of process, no cause printed
+    engine.on('exit', (code: number | null, signal: string | null) => {   //exit code 0 is user terminated or end of process, no cause printed
       if (code === 0 || signal === 'SIGTERM') {
         return;
       }
@@ -267,16 +262,16 @@ class PersistentStockfishWorker {
       );
     });
 
-    engine.stderr.on('data', (chunk) => {
+    engine.stderr.on('data', (chunk: Buffer) => {
       this.stderrBuffer += chunk.toString();
     });
 
-    engine.stdout.on('data', (chunk) => { 
+    engine.stdout.on('data', (chunk: Buffer) => { 
       this.stdoutBuffer += chunk.toString();
-      let newlineIndex = this.stdoutBuffer.indexOf('\n');
+      let newlineIndex: number = this.stdoutBuffer.indexOf('\n');
 
       while (newlineIndex !== -1) {
-        const line = this.stdoutBuffer.slice(0, newlineIndex);
+        const line: string = this.stdoutBuffer.slice(0, newlineIndex);
         this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
         this.handleEngineLine(line.trim());
         newlineIndex = this.stdoutBuffer.indexOf('\n');
@@ -306,11 +301,7 @@ class PersistentStockfishWorker {
   // if the line starts with 'bestmove ' and the currentJob's phase is searching then
   // it passes the line into completeCurrentJob()
 
-  /**
-   * @param {string} line
-   * @returns {void}
-   */
-  handleEngineLine(line) {
+  handleEngineLine(line: string): void {
     if (!line) {
       return;
     }
@@ -334,7 +325,7 @@ class PersistentStockfishWorker {
     }
 
     if (line.startsWith('info ') && this.currentJob?.phase === 'searching') {
-      const parsed = parseInfoLine(line);
+      const parsed: ParsedInfoLine | null = parseInfoLine(line);
 
       if (parsed) {
         this.currentJob.analysisByRank.set(parsed.rank, parsed);
@@ -365,16 +356,13 @@ class PersistentStockfishWorker {
   // one setting the Multipv value as the multiPV setting og this job
   // and another sending the isready command to stockfish
 
-  /**
-   * @returns {void}
-   */
-  maybeStartNextJob() {
+  maybeStartNextJob(): void {
     if (!this.engine || !this.uciReady || this.currentJob || this.jobQueue.length === 0) {
       return;
     }
 
-    const frontJob = this.jobQueue.shift();
-    let activeJob;
+    const frontJob: QueuedJob = this.jobQueue.shift()!;
+    let activeJob: ActiveJob;
     const timeout = setTimeout(() => {
       this.handleJobTimeout(activeJob);
     }, frontJob.timeoutMs); //don't like this at all 
@@ -399,18 +387,14 @@ class PersistentStockfishWorker {
   // makes sure jobs.SearchMoves exists and sets searchMovesClause to it
   // gives stockfish the position jobs pen and the depth to evaluate at
 
-  /**
-   * @param {object} job
-   * @returns {void}
-   */
-  startJobSearch(job) {
+  startJobSearch(job: ActiveJob): void {
     if (!this.engine || this.currentJob !== job) {
       return;
     }
 
     job.phase = 'searching';
 
-    const searchMovesClause =
+    const searchMovesClause: string =
       job.searchMoves.length > 0 ? ` searchmoves ${job.searchMoves.join(' ')}` : '';
 
     this.engine.stdin.write(`position fen ${job.fen}\n`);
@@ -431,20 +415,16 @@ class PersistentStockfishWorker {
   // it also sets jobs resolve fields based on what it grabbed by stockfish
   // it then calls maybeStartNextJob() to start the next job
 
-  /**
-   * @param {string} bestmoveLine
-   * @returns {void}
-   */
-  completeCurrentJob(bestmoveLine) {
+  completeCurrentJob(bestmoveLine: string): void {
     if (!this.currentJob) {
       return;
     }
 
-    const job = this.currentJob;
-    const durationMs = Date.now() - job.startedAt;
-    const fallbackBestMove = bestmoveLine.split(/\s+/)[1] || null;
-    const orderedMultiPv = [...job.analysisByRank.values()].sort((a, b) => a.rank - b.rank);
-    const primary = orderedMultiPv.find((entry) => entry.rank === 1) || orderedMultiPv[0] || null;
+    const job: ActiveJob = this.currentJob;
+    const durationMs: number = Date.now() - job.startedAt;
+    const fallbackBestMove: string | null = bestmoveLine.split(/\s+/)[1] || null;
+    const orderedMultiPv: ParsedInfoLine[] = [...job.analysisByRank.values()].sort((a, b) => a.rank - b.rank);
+    const primary: ParsedInfoLine | null = orderedMultiPv.find((entry) => entry.rank === 1) || orderedMultiPv[0] || null;
 
     clearTimeout(job.timeout);
     this.currentJob = null;
@@ -472,11 +452,7 @@ class PersistentStockfishWorker {
   // it also resets the engine with resetEngine()
   // if the jobQueue is greater than on then it calls ensureStartup() if startup fails then the jobQueue is drained
 
-  /**
-   * @param {object} job
-   * @returns {void}
-   */
-  handleJobTimeout(job) {
+  handleJobTimeout(job: ActiveJob): void {
     if (!this.currentJob || this.currentJob !== job) {
       return;
     }
@@ -486,7 +462,7 @@ class PersistentStockfishWorker {
     this.resetEngine();
 
     if (this.jobQueue.length > 0) {
-      this.ensureStarted().catch((startupError) => {
+      this.ensureStarted().catch((startupError: Error) => {
         this.drainQueue(startupError);
       });
     }
@@ -499,17 +475,13 @@ class PersistentStockfishWorker {
   // clears the timeout and logs the fail with logStockFish
   // it then calls the job's reject field with the error
 
-  /**
-   * @param {Error} error
-   * @returns {void}
-   */
-  failCurrentJob(error) {
+  failCurrentJob(error: Error): void {
     if (!this.currentJob) {
       return;
     }
 
-    const job = this.currentJob;
-    const durationMs = Date.now() - job.startedAt;
+    const job: ActiveJob = this.currentJob;
+    const durationMs: number = Date.now() - job.startedAt;
 
     clearTimeout(job.timeout);
     this.currentJob = null;
@@ -528,11 +500,7 @@ class PersistentStockfishWorker {
   // if there is a currentJob the it fails the current job with failCurrentJob()
   // it then drains the jobQueue and resets the engine with resetEngine
 
-  /**
-   * @param {Error} error
-   * @returns {void}
-   */
-  handleEngineFailure(error) {
+  handleEngineFailure(error: Error): void {
     if (this.startupReject) {
       const rejectStartup = this.startupReject;
 
@@ -553,13 +521,9 @@ class PersistentStockfishWorker {
   //
   // while the jobQueue is not empty it pops off all the jobs and calls the reject function for each job
 
-  /**
-   * @param {Error} error
-   * @returns {void}
-   */
-  drainQueue(error) {
+  drainQueue(error: Error): void {
     while (this.jobQueue.length > 0) {
-      const job = this.jobQueue.shift();
+      const job: QueuedJob = this.jobQueue.shift()!;
       job.reject(error);
     }
   }
@@ -571,10 +535,7 @@ class PersistentStockfishWorker {
   // if there is a startupReject then it calls that function and uses it to display an error to the user
   // resets all the startup's Promise values
 
-  /**
-   * @returns {void}
-   */
-  resetEngine() {
+  resetEngine(): void {
     if (this.engine) {
       this.engine.stdout.removeAllListeners();
       this.engine.stderr.removeAllListeners();
@@ -602,10 +563,7 @@ class PersistentStockfishWorker {
   // if there is a current job it fails it with failCurrent job
   // and finally resets the Engine
 
-  /**
-   * @returns {void}
-   */
-  shutdown() {
+  shutdown(): void {
     this.drainQueue(new Error('Stockfish worker shut down.'));
 
     if (this.currentJob) {
@@ -628,17 +586,6 @@ process.once('exit', () => {
   worker.shutdown();
 });
 
-/**
- * @param {AnalysisRequest} options
- * @returns {Promise<AnalysisResult>}
- */
-function analyzePosition(options) {
+export function analyzePosition(options: AnalysisRequest): Promise<AnalysisResult> {
   return worker.analyze(options);
 }
-
-module.exports = {
-  PersistentStockfishWorker,
-  analyzePosition,
-  normalizeMateScore,
-  parseInfoLine,
-};

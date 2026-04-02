@@ -1,10 +1,10 @@
-const {
+import {
   getTrainingSession,
   getTrainingStats,
   recordTrainingAttempt,
   replaceAnalysisData,
   resetStore,
-} = require('../TrainingStore');
+} from '../TrainingStore';
 
 describe('TrainingStore', () => {
   beforeEach(() => {
@@ -22,7 +22,7 @@ describe('TrainingStore', () => {
           correctMove: 'e2e4',
           correctMoveSan: 'e4',
           evalLoss: 1.25,
-        },
+        } as any,
       ],
     });
 

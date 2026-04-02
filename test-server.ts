@@ -1,6 +1,6 @@
-const { analyzeGames } = require('./AnalyzeGames');
-const { parseUploadedFiles } = require('./ParsePgn');
-const { fakeAnalyzePosition } = require('./tests/helpers/fakeAnalyzePosition');
+import { analyzeGames } from './AnalyzeGames';
+import { parseUploadedFiles } from './ParsePgn';
+import { fakeAnalyzePosition } from './tests/helpers/fakeAnalyzePosition';
 
 const samplePgn = `[Event "Training Sample"]
 [Site "Local"]
@@ -12,7 +12,7 @@ const samplePgn = `[Event "Training Sample"]
 
 1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4 exd4 6. cxd4 Bb4+ 1-0`;
 
-async function run() {
+async function run(): Promise<void> {
   const parsed = parseUploadedFiles([
     {
       originalname: 'training-sample.pgn',
@@ -52,7 +52,7 @@ async function run() {
   );
 }
 
-run().catch((error) => {
+run().catch((error: Error) => {
   console.error('\nTest script failed:');
   console.error(error);
   process.exitCode = 1;

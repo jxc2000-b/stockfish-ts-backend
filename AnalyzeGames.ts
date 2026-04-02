@@ -1,12 +1,14 @@
-const { Chess } = require('chess.js');
-const { analyzePosition: defaultAnalyzePosition } = require('./StockfishEngine');
+import { Chess } from 'chess.js';
+import { analyzePosition as defaultAnalyzePosition, AnalysisResult, ParsedInfoLine, AnalyzePositionFn } from './StockfishEngine';
+import { ParsedGame } from './ParsePgn';
+import { SourceGameMetadata, TrainingPosition } from './TrainingStore';
 
-const DEFAULT_DEPTH = 10;
-const DEFAULT_ERROR_THRESHOLD = 0.8;
-const DEFAULT_MULTIPV = 3;
-const ANALYSIS_LOGGING_ENABLED = process.env.ANALYSIS_LOG !== '0';
+export const DEFAULT_DEPTH = 10;
+export const DEFAULT_ERROR_THRESHOLD = 0.8;
+export const DEFAULT_MULTIPV = 3;
+const ANALYSIS_LOGGING_ENABLED: boolean = process.env.ANALYSIS_LOG !== '0';
 
-function logAnalysis(message) {
+function logAnalysis(message: string): void {
   if (!ANALYSIS_LOGGING_ENABLED) {
     return;
   }
@@ -14,11 +16,11 @@ function logAnalysis(message) {
   console.log(`[${new Date().toISOString()}] [analysis] ${message}`);
 }
 
-function roundScore(value) {
+export function roundScore(value: number): number {
   return Number(value.toFixed(2));
 }
 
-function classifyEvalLoss(evalLoss, errorThreshold = DEFAULT_ERROR_THRESHOLD) {
+export function classifyEvalLoss(evalLoss: number | null, errorThreshold: number = DEFAULT_ERROR_THRESHOLD): string {
   if (typeof evalLoss !== 'number') {
     return 'unscored';
   }
@@ -38,12 +40,12 @@ function classifyEvalLoss(evalLoss, errorThreshold = DEFAULT_ERROR_THRESHOLD) {
   return 'ok';
 }
 
-function uciToSan(fen, uci) {
+export function uciToSan(fen: string, uci: string | null): string | null {
   if (!uci) {
     return null;
   }
 
-  const match = uci.match(/^([a-h][1-8])([a-h][1-8])([nbrq])?$/);
+  const match: RegExpMatchArray | null = uci.match(/^([a-h][1-8])([a-h][1-8])([nbrq])?$/);
 
   if (!match) {
     return null;
@@ -59,7 +61,7 @@ function uciToSan(fen, uci) {
   return move ? move.san : null;
 }
 
-function buildSourceGameMetadata(game) {
+export function buildSourceGameMetadata(game: ParsedGame): SourceGameMetadata {
   return {
     gameId: game.id,
     sourceFileId: game.sourceFileId,
@@ -74,18 +76,53 @@ function buildSourceGameMetadata(game) {
   };
 }
 
-async function analyzeGames(
-  games,
+export interface AnalyzedMove {
+  id: string;
+  gameId: string;
+  plyIndex: number;
+  moveNumber: number;
+  color: string;
+  fenBeforeMove: string;
+  fenAfterMove: string;
+  playedMove: string;
+  playedMoveUci: string;
+  bestMove: string | null;
+  bestMoveSan: string | null;
+  evalBefore: number | null;
+  evalBeforeText: string | null;
+  evalAfter: number | null;
+  evalAfterText: string | null;
+  evalLoss: number | null;
+  severity: string;
+  principalVariation: string[];
+  multiPv: ParsedInfoLine[];
+  sourceGameMetadata: SourceGameMetadata;
+}
+
+export interface AnalyzeGamesOptions {
+  analyzePosition?: AnalyzePositionFn;
+  depth?: number;
+  errorThreshold?: number;
+  multiPv?: number;
+}
+
+export interface AnalyzeGamesResult {
+  analyzedMoves: AnalyzedMove[];
+  trainingPositions: TrainingPosition[];
+}
+
+export async function analyzeGames(
+  games: ParsedGame[],
   {
     analyzePosition = defaultAnalyzePosition,
     depth = DEFAULT_DEPTH,
     errorThreshold = DEFAULT_ERROR_THRESHOLD,
     multiPv = DEFAULT_MULTIPV,
-  } = {}
-) {
-  const analyzedMoves = [];
-  const trainingPositions = [];
-  const totalMoves = games.reduce((sum, game) => sum + game.moves.length, 0);
+  }: AnalyzeGamesOptions = {}
+): Promise<AnalyzeGamesResult> {
+  const analyzedMoves: AnalyzedMove[] = [];
+  const trainingPositions: TrainingPosition[] = [];
+  const totalMoves: number = games.reduce((sum, game) => sum + game.moves.length, 0);
   let nextAnalyzedMoveId = 1;
   let nextTrainingPositionId = 1;
   let processedMoves = 0;
@@ -95,7 +132,7 @@ async function analyzeGames(
   );
 
   for (const [gameIndex, game] of games.entries()) {
-    const sourceGameMetadata = buildSourceGameMetadata(game);
+    const sourceGameMetadata: SourceGameMetadata = buildSourceGameMetadata(game);
 
     logAnalysis(
       `game ${gameIndex + 1}/${games.length} ${game.white} vs ${game.black} moves=${game.moves.length}`
@@ -108,14 +145,14 @@ async function analyzeGames(
         `move ${processedMoves}/${totalMoves} game=${gameIndex + 1}/${games.length} ply=${move.plyIndex}/${game.moves.length} color=${move.color} played=${move.san}`
       );
 
-      const preMoveAnalysis = await analyzePosition({
+      const preMoveAnalysis: AnalysisResult = await analyzePosition({
         fen: move.fenBeforeMove,
         depth,
         multiPv,
         analysisLabel: `${game.id} ply ${move.plyIndex} pre ${move.san}`,
       });
 
-      const actualMoveAnalysis =
+      const actualMoveAnalysis: AnalysisResult =
         preMoveAnalysis.bestMove === move.uci
           ? {
               bestMove: move.uci,
@@ -126,8 +163,8 @@ async function analyzeGames(
                 {
                   rank: 1,
                   bestMove: move.uci,
-                  evaluation: preMoveAnalysis.evaluation,
-                  evaluationText: preMoveAnalysis.evaluationText,
+                  evaluation: preMoveAnalysis.evaluation!,
+                  evaluationText: preMoveAnalysis.evaluationText!,
                   principalVariation: preMoveAnalysis.principalVariation,
                 },
               ],
@@ -140,19 +177,19 @@ async function analyzeGames(
               analysisLabel: `${game.id} ply ${move.plyIndex} actual ${move.san}`,
             });
 
-      const hasComparableScores =
+      const hasComparableScores: boolean =
         typeof preMoveAnalysis.evaluation === 'number' &&
         typeof actualMoveAnalysis.evaluation === 'number';
 
-      const evalBefore = hasComparableScores ? roundScore(preMoveAnalysis.evaluation) : null;
-      const evalAfter = hasComparableScores ? roundScore(actualMoveAnalysis.evaluation) : null;
-      const evalLoss =
+      const evalBefore: number | null = hasComparableScores ? roundScore(preMoveAnalysis.evaluation!) : null;
+      const evalAfter: number | null = hasComparableScores ? roundScore(actualMoveAnalysis.evaluation!) : null;
+      const evalLoss: number | null =
         hasComparableScores && evalBefore !== null && evalAfter !== null
           ? roundScore(Math.max(0, evalBefore - evalAfter))
           : null;
-      const severity = classifyEvalLoss(evalLoss, errorThreshold);
+      const severity: string = classifyEvalLoss(evalLoss, errorThreshold);
 
-      const analyzedMove = {
+      const analyzedMove: AnalyzedMove = {
         id: `analyzed-move-${nextAnalyzedMoveId++}`,
         gameId: game.id,
         plyIndex: move.plyIndex,
@@ -188,7 +225,7 @@ async function analyzeGames(
           id: `training-position-${nextTrainingPositionId++}`,
           analyzedMoveId: analyzedMove.id,
           fen: move.fenBeforeMove,
-          correctMove: preMoveAnalysis.bestMove,
+          correctMove: preMoveAnalysis.bestMove!,
           correctMoveSan: analyzedMove.bestMoveSan,
           playedMove: move.san,
           playedMoveUci: move.uci,
@@ -215,14 +252,3 @@ async function analyzeGames(
     trainingPositions,
   };
 }
-
-module.exports = {
-  DEFAULT_DEPTH,
-  DEFAULT_ERROR_THRESHOLD,
-  DEFAULT_MULTIPV,
-  analyzeGames,
-  buildSourceGameMetadata,
-  classifyEvalLoss,
-  roundScore,
-  uciToSan,
-};
