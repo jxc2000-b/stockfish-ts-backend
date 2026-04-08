@@ -1,4 +1,4 @@
-import { ParsedInfoLine } from './StockfishEngine';
+import { ParsedInfoLine } from './stockfishEngineRewrite';
 
 export interface SourceGameMetadata {
   gameId: string;

@@ -1,7 +1,10 @@
 import { Chess } from 'chess.js';
-import { analyzePosition as defaultAnalyzePosition, AnalysisResult, ParsedInfoLine, AnalyzePositionFn } from './StockfishEngine';
+import { analyzePositionReadable as defaultAnalyzePosition, ParsedInfoLine } from './stockfishEngineRewrite';
 import { ParsedGame } from './ParsePgn';
 import { SourceGameMetadata, TrainingPosition } from './TrainingStore';
+
+type AnalyzePositionFn = typeof defaultAnalyzePosition;
+type AnalysisResult = Awaited<ReturnType<AnalyzePositionFn>>;
 
 export const DEFAULT_DEPTH = 10;
 export const DEFAULT_ERROR_THRESHOLD = 0.8;
@@ -146,6 +149,7 @@ export async function analyzeGames(
       );
 
       const preMoveAnalysis: AnalysisResult = await analyzePosition({
+        command: 'go',
         fen: move.fenBeforeMove,
         depth,
         multiPv,
@@ -170,6 +174,7 @@ export async function analyzeGames(
               ],
             }
           : await analyzePosition({
+              command: 'go',
               fen: move.fenBeforeMove,
               depth,
               multiPv: 1,
