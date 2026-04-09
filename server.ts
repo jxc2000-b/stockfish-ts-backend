@@ -3,7 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { analyzeGames, DEFAULT_DEPTH, DEFAULT_ERROR_THRESHOLD, DEFAULT_MULTIPV } from './AnalyzeGames';
 import { parseUploadedFiles } from './ParsePgn';
-import { analyzePositionReadable as analyzePosition } from './stockfishEngineRewrite';
+import { analyzePosition as analyzePosition } from './stockfishEngineRewrite';
 import {
   getStateSnapshot,
   getTrainingSession,
