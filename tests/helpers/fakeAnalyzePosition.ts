@@ -1,6 +1,9 @@
 import { Chess, Move } from 'chess.js';
 import { moveToUci } from '../../ParsePgn';
-import { AnalysisResult, AnalysisRequest, ParsedInfoLine } from '../../StockfishEngine';
+import { analyzePosition as defaultAnalyzePosition, ParsedInfoLine } from '../../stockfishEngine';
+
+type AnalysisRequest = Parameters<typeof defaultAnalyzePosition>[0];
+type AnalysisResult = Awaited<ReturnType<typeof defaultAnalyzePosition>>;
 
 export async function fakeAnalyzePosition({ fen, multiPv = 3, searchMoves = [] }: AnalysisRequest): Promise<AnalysisResult> {
   const chess = new Chess(fen);

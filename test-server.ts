@@ -1,4 +1,4 @@
-import { analyzePosition, stockfishWorker } from './stockfishEngineRewrite';
+import { analyzePosition, stockfishWorker } from './stockfishEngine';
 
 type WorkerRequest = Parameters<typeof analyzePosition>[0];
 type WorkerResult = Awaited<ReturnType<typeof analyzePosition>>;

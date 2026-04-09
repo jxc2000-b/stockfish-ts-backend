@@ -1,4 +1,4 @@
-import { ParsedInfoLine } from './stockfishEngineRewrite';
+import { ParsedInfoLine } from './stockfishEngine';
 
 export interface SourceGameMetadata {
   gameId: string;
@@ -204,11 +204,11 @@ export function getTrainingStats(): TrainingStats {
     const attempts: TrainingAttempt[] = state.trainingAttempts.filter(
       (attempt) => attempt.trainingPositionId === position.id
     );
-    const averageResponseTimeMs: number | null = 
+    const averageResponseTimeMs: number | null =
       attempts.length > 0
         ? Math.round(
-            attempts.reduce((sum, attempt) => sum + attempt.responseTimeMs, 0) / attempts.length
-          )
+          attempts.reduce((sum, attempt) => sum + attempt.responseTimeMs, 0) / attempts.length
+        )
         : null; //avg response kinda useless
 
     return {

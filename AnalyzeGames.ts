@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { analyzePositionReadable as defaultAnalyzePosition, ParsedInfoLine } from './stockfishEngineRewrite';
+import { analyzePosition as defaultAnalyzePosition, ParsedInfoLine } from './stockfishEngine';
 import { ParsedGame } from './ParsePgn';
 import { SourceGameMetadata, TrainingPosition } from './TrainingStore';
 
@@ -21,6 +21,30 @@ function logAnalysis(message: string): void {
 
 export function roundScore(value: number): number {
   return Number(value.toFixed(2));
+}
+
+export function normalizePlayerName(value: string | null | undefined): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+export function getTrackedColor(game: ParsedGame, playerName: string | null | undefined): 'white' | 'black' | null {
+  const normalizedPlayerName = normalizePlayerName(playerName);
+
+  if (!normalizedPlayerName) {
+    return null;
+  }
+
+  if (normalizePlayerName(game.white) === normalizedPlayerName) {
+    return 'white';
+  }
+
+  if (normalizePlayerName(game.black) === normalizedPlayerName) {
+    return 'black';
+  }
+
+  return null;
 }
 
 export function classifyEvalLoss(evalLoss: number | null, errorThreshold: number = DEFAULT_ERROR_THRESHOLD): string {
@@ -107,6 +131,7 @@ export interface AnalyzeGamesOptions {
   depth?: number;
   errorThreshold?: number;
   multiPv?: number;
+  playerName?: string;
 }
 
 export interface AnalyzeGamesResult {
@@ -121,24 +146,45 @@ export async function analyzeGames(
     depth = DEFAULT_DEPTH,
     errorThreshold = DEFAULT_ERROR_THRESHOLD,
     multiPv = DEFAULT_MULTIPV,
+    playerName = '',
   }: AnalyzeGamesOptions = {}
 ): Promise<AnalyzeGamesResult> {
   const analyzedMoves: AnalyzedMove[] = [];
   const trainingPositions: TrainingPosition[] = [];
-  const totalMoves: number = games.reduce((sum, game) => sum + game.moves.length, 0);
+  const totalMoves: number = games.reduce((sum, game) => {
+    const trackedColor = getTrackedColor(game, playerName);
+
+    if (normalizePlayerName(playerName) && !trackedColor) {
+      return sum;
+    }
+
+    return sum + game.moves.length;
+  }, 0);
   let nextAnalyzedMoveId = 1;
   let nextTrainingPositionId = 1;
   let processedMoves = 0;
 
   logAnalysis(
-    `start games=${games.length} totalMoves=${totalMoves} depth=${depth} multipv=${multiPv} threshold=${errorThreshold}`
+    `start games=${games.length} totalMoves=${totalMoves} depth=${depth} multipv=${multiPv} threshold=${errorThreshold}${
+      normalizePlayerName(playerName) ? ` player=${normalizePlayerName(playerName)}` : ''
+    }`
   );
 
   for (const [gameIndex, game] of games.entries()) {
     const sourceGameMetadata: SourceGameMetadata = buildSourceGameMetadata(game);
+    const trackedColor = getTrackedColor(game, playerName);
+
+    if (normalizePlayerName(playerName) && !trackedColor) {
+      logAnalysis(
+        `game ${gameIndex + 1}/${games.length} ${game.white} vs ${game.black} skipped no player match`
+      );
+      continue;
+    }
 
     logAnalysis(
-      `game ${gameIndex + 1}/${games.length} ${game.white} vs ${game.black} moves=${game.moves.length}`
+      `game ${gameIndex + 1}/${games.length} ${game.white} vs ${game.black} moves=${game.moves.length}${
+        trackedColor ? ` trackedColor=${trackedColor}` : ''
+      }`
     );
 
     for (const move of game.moves) {
@@ -159,28 +205,28 @@ export async function analyzeGames(
       const actualMoveAnalysis: AnalysisResult =
         preMoveAnalysis.bestMove === move.uci
           ? {
-              bestMove: move.uci,
-              evaluation: preMoveAnalysis.evaluation,
-              evaluationText: preMoveAnalysis.evaluationText,
-              principalVariation: preMoveAnalysis.principalVariation,
-              multiPv: [
-                {
-                  rank: 1,
-                  bestMove: move.uci,
-                  evaluation: preMoveAnalysis.evaluation!,
-                  evaluationText: preMoveAnalysis.evaluationText!,
-                  principalVariation: preMoveAnalysis.principalVariation,
-                },
-              ],
-            }
+            bestMove: move.uci,
+            evaluation: preMoveAnalysis.evaluation,
+            evaluationText: preMoveAnalysis.evaluationText,
+            principalVariation: preMoveAnalysis.principalVariation,
+            multiPv: [
+              {
+                rank: 1,
+                bestMove: move.uci,
+                evaluation: preMoveAnalysis.evaluation!,
+                evaluationText: preMoveAnalysis.evaluationText!,
+                principalVariation: preMoveAnalysis.principalVariation,
+              },
+            ],
+          }
           : await analyzePosition({
-              command: 'go',
-              fen: move.fenBeforeMove,
-              depth,
-              multiPv: 1,
-              searchMoves: [move.uci],
-              analysisLabel: `${game.id} ply ${move.plyIndex} actual ${move.san}`,
-            });
+            command: 'go',
+            fen: move.fenBeforeMove,
+            depth,
+            multiPv: 1,
+            searchMoves: [move.uci],
+            analysisLabel: `${game.id} ply ${move.plyIndex} actual ${move.san}`,
+          });
 
       const hasComparableScores: boolean =
         typeof preMoveAnalysis.evaluation === 'number' &&
@@ -220,12 +266,15 @@ export async function analyzeGames(
       analyzedMoves.push(analyzedMove);
 
       logAnalysis(
-        `move complete game=${gameIndex + 1}/${games.length} ply=${move.plyIndex} best=${
-          analyzedMove.bestMoveSan || analyzedMove.bestMove || 'none'
+        `move complete game=${gameIndex + 1}/${games.length} ply=${move.plyIndex} best=${analyzedMove.bestMoveSan || analyzedMove.bestMove || 'none'
         } loss=${evalLoss ?? 'n/a'} severity=${severity}`
       );
 
-      if (typeof evalLoss === 'number' && evalLoss >= errorThreshold) {
+      if (
+        typeof evalLoss === 'number' &&
+        evalLoss >= errorThreshold &&
+        (!trackedColor || move.color !== trackedColor)
+      ) {
         trainingPositions.push({
           id: `training-position-${nextTrainingPositionId++}`,
           analyzedMoveId: analyzedMove.id,

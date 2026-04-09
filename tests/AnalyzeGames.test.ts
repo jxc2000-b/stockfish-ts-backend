@@ -34,10 +34,55 @@ describe('AnalyzeGames', () => {
     expect(analysis.trainingPositions[0].multiPv.length).toBeGreaterThan(0);
     expect(analysis.trainingPositions[0].sourceGameMetadata.white).toBe('Student');
 
+    const analyzedMovesById = new Map(
+      analysis.analyzedMoves.map((move) => [move.id, move])
+    );
+    for (const trainingPosition of analysis.trainingPositions) {
+      const currentMove = analyzedMovesById.get(trainingPosition.analyzedMoveId);
+
+      expect(currentMove).toBeDefined();
+      expect(trainingPosition.fen).toBe(currentMove!.fenBeforeMove);
+      expect(trainingPosition.correctMove).toBe(currentMove!.bestMove);
+      expect(trainingPosition.evalLoss).toBe(currentMove!.evalLoss);
+      expect(trainingPosition.severity).toBe(currentMove!.severity);
+      expect(trainingPosition.evalLoss).toBeGreaterThanOrEqual(0.8);
+    }
+
     for (let index = 1; index < analysis.trainingPositions.length; index += 1) {
       expect(analysis.trainingPositions[index - 1].evalLoss).toBeGreaterThanOrEqual(
         analysis.trainingPositions[index].evalLoss
       );
+    }
+  });
+
+  test('limits training positions to the opponent turns when playerName is provided', async () => {
+    const parsed = parseUploadedFiles([
+      {
+        originalname: 'training-sample.pgn',
+        buffer: Buffer.from(samplePgn, 'utf8'),
+      },
+    ]);
+
+    const analysis = await analyzeGames(parsed.games, {
+      analyzePosition: fakeAnalyzePosition,
+      depth: 22,
+      errorThreshold: 0.8,
+      multiPv: 3,
+      playerName: 'student',
+    });
+
+    expect(analysis.analyzedMoves).toHaveLength(parsed.games[0].moves.length);
+    expect(analysis.trainingPositions.length).toBeGreaterThan(0);
+
+    const analyzedMovesById = new Map(analysis.analyzedMoves.map((move) => [move.id, move]));
+
+    for (const trainingPosition of analysis.trainingPositions) {
+      const currentMove = analyzedMovesById.get(trainingPosition.analyzedMoveId);
+
+      expect(currentMove).toBeDefined();
+      expect(currentMove!.color).toBe('black');
+      expect(trainingPosition.fen).toBe(currentMove!.fenBeforeMove);
+      expect(trainingPosition.evalLoss).toBe(currentMove!.evalLoss);
     }
   });
 });
