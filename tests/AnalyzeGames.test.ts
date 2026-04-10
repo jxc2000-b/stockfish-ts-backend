@@ -55,7 +55,7 @@ describe('AnalyzeGames', () => {
     }
   });
 
-  test('limits training positions to the opponent turns when playerName is provided', async () => {
+  test('serves tracked-player positions using the previous opponent blunder swing', async () => {
     const parsed = parseUploadedFiles([
       {
         originalname: 'training-sample.pgn',
@@ -75,14 +75,22 @@ describe('AnalyzeGames', () => {
     expect(analysis.trainingPositions.length).toBeGreaterThan(0);
 
     const analyzedMovesById = new Map(analysis.analyzedMoves.map((move) => [move.id, move]));
+    const analyzedMovesByPly = new Map(analysis.analyzedMoves.map((move) => [move.plyIndex, move]));
 
     for (const trainingPosition of analysis.trainingPositions) {
       const currentMove = analyzedMovesById.get(trainingPosition.analyzedMoveId);
 
       expect(currentMove).toBeDefined();
-      expect(currentMove!.color).toBe('black');
+      expect(currentMove!.color).toBe('white');
+      expect(currentMove!.plyIndex).toBeGreaterThan(1);
       expect(trainingPosition.fen).toBe(currentMove!.fenBeforeMove);
-      expect(trainingPosition.evalLoss).toBe(currentMove!.evalLoss);
+
+      const triggeringOpponentMove = analyzedMovesByPly.get(currentMove!.plyIndex - 1);
+
+      expect(triggeringOpponentMove).toBeDefined();
+      expect(triggeringOpponentMove!.color).toBe('black');
+      expect(trainingPosition.evalLoss).toBe(triggeringOpponentMove!.evalLoss);
+      expect(trainingPosition.severity).toBe(triggeringOpponentMove!.severity);
     }
   });
 });

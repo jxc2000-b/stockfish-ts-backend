@@ -173,6 +173,7 @@ export async function analyzeGames(
   for (const [gameIndex, game] of games.entries()) {
     const sourceGameMetadata: SourceGameMetadata = buildSourceGameMetadata(game);
     const trackedColor = getTrackedColor(game, playerName);
+    let previousAnalyzedMove: AnalyzedMove | null = null;
 
     if (normalizePlayerName(playerName) && !trackedColor) {
       logAnalysis(
@@ -271,10 +272,27 @@ export async function analyzeGames(
       );
 
       if (
-        typeof evalLoss === 'number' &&
-        evalLoss >= errorThreshold &&
-        (!trackedColor || move.color !== trackedColor)
+        trackedColor &&
+        move.color === trackedColor &&
+        previousAnalyzedMove?.color !== trackedColor &&
+        typeof previousAnalyzedMove?.evalLoss === 'number' &&
+        previousAnalyzedMove.evalLoss >= errorThreshold
       ) {
+        trainingPositions.push({
+          id: `training-position-${nextTrainingPositionId++}`,
+          analyzedMoveId: analyzedMove.id,
+          fen: move.fenBeforeMove,
+          correctMove: preMoveAnalysis.bestMove!,
+          correctMoveSan: analyzedMove.bestMoveSan,
+          playedMove: move.san,
+          playedMoveUci: move.uci,
+          evalLoss: previousAnalyzedMove.evalLoss,
+          severity: previousAnalyzedMove.severity,
+          principalVariation: preMoveAnalysis.principalVariation,
+          multiPv: preMoveAnalysis.multiPv,
+          sourceGameMetadata,
+        });
+      } else if (!trackedColor && typeof evalLoss === 'number' && evalLoss >= errorThreshold) {
         trainingPositions.push({
           id: `training-position-${nextTrainingPositionId++}`,
           analyzedMoveId: analyzedMove.id,
@@ -290,6 +308,8 @@ export async function analyzeGames(
           sourceGameMetadata,
         });
       }
+
+      previousAnalyzedMove = analyzedMove;
     }
   }
 
