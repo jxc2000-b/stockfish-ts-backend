@@ -523,7 +523,7 @@ export class PersistentStockfishWorker {
         }
 
         this.activeJob = null;
-        clearTimeout(job.timeoutHandle);
+        clearTimeout(job.timeout);
 
         const durationMs = Date.now() - job.startedAt;
         this.log(`fail ${job.analysisLabel} after ${durationMs}ms: ${error.message}`);

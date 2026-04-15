@@ -71,24 +71,27 @@ describe('AnalyzeGames', () => {
       playerName: 'student',
     });
 
-    expect(analysis.analyzedMoves).toHaveLength(parsed.games[0].moves.length);
+    expect(analysis.analyzedMoves).toHaveLength(3);
     expect(analysis.trainingPositions.length).toBeGreaterThan(0);
 
     const analyzedMovesById = new Map(analysis.analyzedMoves.map((move) => [move.id, move]));
-    const analyzedMovesByPly = new Map(analysis.analyzedMoves.map((move) => [move.plyIndex, move]));
+    const parsedMovesByPly = new Map(parsed.games[0].moves.map((move) => [move.plyIndex, move]));
 
     for (const trainingPosition of analysis.trainingPositions) {
-      const currentMove = analyzedMovesById.get(trainingPosition.analyzedMoveId);
-
-      expect(currentMove).toBeDefined();
-      expect(currentMove!.color).toBe('white');
-      expect(currentMove!.plyIndex).toBeGreaterThan(1);
-      expect(trainingPosition.fen).toBe(currentMove!.fenBeforeMove);
-
-      const triggeringOpponentMove = analyzedMovesByPly.get(currentMove!.plyIndex - 1);
+      const triggeringOpponentMove = analyzedMovesById.get(trainingPosition.analyzedMoveId);
 
       expect(triggeringOpponentMove).toBeDefined();
       expect(triggeringOpponentMove!.color).toBe('black');
+      expect(triggeringOpponentMove!.plyIndex).toBeLessThan(parsed.games[0].moves.length);
+      expect(triggeringOpponentMove!.evalLoss).toBeGreaterThanOrEqual(0.8);
+
+      const trackedReplyMove = parsedMovesByPly.get(triggeringOpponentMove!.plyIndex + 1);
+
+      expect(trackedReplyMove).toBeDefined();
+      expect(trackedReplyMove!.color).toBe('white');
+      expect(trainingPosition.fen).toBe(trackedReplyMove!.fenBeforeMove);
+      expect(trainingPosition.playedMove).toBe(trackedReplyMove!.san);
+      expect(trainingPosition.playedMoveUci).toBe(trackedReplyMove!.uci);
       expect(trainingPosition.evalLoss).toBe(triggeringOpponentMove!.evalLoss);
       expect(trainingPosition.severity).toBe(triggeringOpponentMove!.severity);
     }

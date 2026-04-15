@@ -22,7 +22,7 @@ describe('ChessComImport', () => {
     ]);
   });
 
-  test('filters to the requested player and supported live chess time controls', () => {
+  test('filters to the requested player and excludes daily games', () => {
     const filtered = filterMonthlyArchiveGames(
       [
         {
@@ -46,22 +46,30 @@ describe('ChessComImport', () => {
           time_class: 'blitz',
           pgn: '[Event "Blitz"]\n\n1. d4 d5 0-1',
         },
+        {
+          white: { username: 'KindaguyBryan' },
+          black: { username: 'Other' },
+          rules: 'chess',
+          time_class: 'daily',
+          pgn: '[Event "Daily"]\n\n1. c4 c5 1-0',
+        },
       ],
       'kindaguybryan',
       ['rapid']
     );
 
-    expect(filtered).toHaveLength(1);
+    expect(filtered).toHaveLength(2);
 
     const syntheticFile = createSyntheticPgnFile({
       username: 'KindaguyBryan',
       archiveUrl: 'https://api.chess.com/pub/player/kindaguybryan/games/2026/03',
       games: filtered,
-      timeControls: ['rapid'],
     });
 
-    expect(syntheticFile.originalname).toBe('chesscom-kindaguybryan-rapid-2026-03.pgn');
+    expect(syntheticFile.originalname).toBe('chesscom-kindaguybryan-2026-03.pgn');
     expect(syntheticFile.buffer.toString('utf8')).toContain('[Event "Rapid"]');
+    expect(syntheticFile.buffer.toString('utf8')).toContain('[Event "Blitz"]');
+    expect(syntheticFile.buffer.toString('utf8')).not.toContain('[Event "Daily"]');
   });
 
   test('imports all matching archive months within the selected window', async () => {
@@ -135,12 +143,15 @@ describe('ChessComImport', () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(4);
     expect(imported.selectedArchiveUrls).toEqual([
+      'https://api.chess.com/pub/player/kindaguybryan/games/2026/03',
       'https://api.chess.com/pub/player/kindaguybryan/games/2026/02',
       'https://api.chess.com/pub/player/kindaguybryan/games/2026/01',
     ]);
-    expect(imported.importedGamesCount).toBe(2);
-    expect(imported.files).toHaveLength(2);
-    expect(imported.files[0].buffer.toString('utf8')).toContain('[Event "Rapid"]');
-    expect(imported.files[1].buffer.toString('utf8')).toContain('[Event "Rapid January"]');
+    expect(imported.importedGamesCount).toBe(3);
+    expect(imported.timeControls).toEqual([]);
+    expect(imported.files).toHaveLength(3);
+    expect(imported.files[0].buffer.toString('utf8')).toContain('[Event "Blitz"]');
+    expect(imported.files[1].buffer.toString('utf8')).toContain('[Event "Rapid"]');
+    expect(imported.files[2].buffer.toString('utf8')).toContain('[Event "Rapid January"]');
   });
 });

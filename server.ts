@@ -2,6 +2,13 @@ import express, { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { analyzeGames, DEFAULT_DEPTH, DEFAULT_ERROR_THRESHOLD, DEFAULT_MULTIPV } from './AnalyzeGames';
+import {
+  beginAnalysisProgress,
+  completeAnalysisProgress,
+  failAnalysisProgress,
+  getAnalysisProgressSnapshot,
+  updateAnalysisProgress,
+} from './AnalysisProgress';
 import { appendFrontendAnalysisTimingLog } from './ClientTimingLogger';
 import {
   DEFAULT_TIME_CONTROL,
@@ -110,6 +117,10 @@ const trainingAttemptBodySchema = z.object({
   responseTimeMs: z.coerce.number().int().min(0),
 });
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Internal server error.';
+}
+
 app.use(express.json());
 
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -133,16 +144,36 @@ app.post('/api/analysis-timing-log', async (req: Request, res: Response, next: N
 });
 
 app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextFunction) => {
+  let progressStarted = false;
+
   try {
     const body = importChessComBodySchema.parse(req.body);
+
+    beginAnalysisProgress({
+      playerName: body.username,
+      stage: 'importing',
+      message: 'Fetching Chess.com games.',
+    });
+    progressStarted = true;
+
     const importedArchive = await importChessComGames({
       username: body.username,
       monthsBack: body.monthsBack,
       timeControls: body.timeControls,
     });
+
+    updateAnalysisProgress({
+      stage: 'parsing',
+      processedMoves: 0,
+      totalMoves: 0,
+      currentGame: '',
+      message: 'Parsing imported PGNs.',
+    });
+
     const parsedImport = parseUploadedFiles(importedArchive.files);
 
     if (parsedImport.games.length === 0) {
+      failAnalysisProgress('Chess.com import did not produce any valid PGN games.');
       res.status(400).json({
         error: 'Chess.com import did not produce any valid PGN games.',
         uploadedFiles: parsedImport.uploadedFiles,
@@ -154,10 +185,12 @@ app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextF
     const analysis = await analyzeGames(parsedImport.games, {
       analyzePosition,
       playerName: body.username,
+      onProgress: updateAnalysisProgress,
       ...analysisConfig,
     });
 
     if (analysis.analyzedMoves.length === 0) {
+      failAnalysisProgress(`No moves matched "${body.username}" in the imported Chess.com games.`);
       res.status(400).json({
         error: `No moves matched "${body.username}" in the imported Chess.com games.`,
       });
@@ -165,6 +198,7 @@ app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextF
     }
 
     if (analysis.trainingPositions.length === 0) {
+      failAnalysisProgress('No training positions were found for that Chess.com account above the current error threshold.');
       res.status(400).json({
         error: 'No training positions were found for that Chess.com account above the current error threshold.',
       });
@@ -178,6 +212,8 @@ app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextF
       analyzedMoves: analysis.analyzedMoves,
       trainingPositions: analysis.trainingPositions,
     });
+
+    completeAnalysisProgress(`Analysis complete. Found ${analysis.trainingPositions.length} training positions.`);
 
     res.json({
       uploadedFiles: parsedImport.uploadedFiles,
@@ -197,6 +233,10 @@ app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextF
       },
     });
   } catch (error) {
+    if (progressStarted) {
+      failAnalysisProgress(getErrorMessage(error));
+    }
+
     if (typeof (error as { statusCode?: unknown }).statusCode === 'number') {
       res.status((error as { statusCode: number }).statusCode).json({ error: (error as Error).message });
       return;
@@ -207,6 +247,8 @@ app.post('/api/import-chesscom', async (req: Request, res: Response, next: NextF
 });
 
 app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res: Response, next: NextFunction) => {
+  let progressStarted = false;
+
   try {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) {
@@ -241,6 +283,13 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res
       return;
     }
 
+    beginAnalysisProgress({
+      playerName,
+      stage: 'parsing',
+      message: `Parsing ${files.length} uploaded PGN file${files.length === 1 ? '' : 's'}.`,
+    });
+    progressStarted = true;
+
     const parsedUpload = parseUploadedFiles(files);
 
     console.log(
@@ -248,6 +297,7 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res
     );
 
     if (parsedUpload.games.length === 0) {
+      failAnalysisProgress('No valid PGN games were parsed from the upload.');
       res.status(400).json({
         error: 'No valid PGN games were parsed from the upload.',
         uploadedFiles: parsedUpload.uploadedFiles,
@@ -259,10 +309,12 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res
     const analysis = await analyzeGames(parsedUpload.games, {
       analyzePosition,
       playerName,
+      onProgress: updateAnalysisProgress,
       ...analysisConfig,
     });
 
     if (analysis.analyzedMoves.length === 0) {
+      failAnalysisProgress(`No moves matched "${playerName}" in the uploaded PGNs.`);
       res.status(400).json({
         error: `No moves matched "${playerName}" in the uploaded PGNs.`,
       });
@@ -281,6 +333,8 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res
       trainingPositions: analysis.trainingPositions,
     });
 
+    completeAnalysisProgress(`Analysis complete. Found ${analysis.trainingPositions.length} training positions.`);
+
     res.json({
       uploadedFiles: parsedUpload.uploadedFiles,
       errors: parsedUpload.errors,
@@ -290,6 +344,10 @@ app.post('/api/upload-pgns', upload.array('files', 10), async (req: Request, res
       trainingSession: getTrainingSession(),
     });
   } catch (error) {
+    if (progressStarted) {
+      failAnalysisProgress(getErrorMessage(error));
+    }
+
     next(error);
   }
 });
@@ -317,6 +375,10 @@ app.post('/api/training-attempts', (req: Request, res: Response, next: NextFunct
 
 app.get('/api/training-stats', (_req: Request, res: Response) => {
   res.json(getTrainingStats());
+});
+
+app.get('/api/analysis-progress', (_req: Request, res: Response) => {
+  res.json(getAnalysisProgressSnapshot());
 });
 
 app.get('/api/state', (_req: Request, res: Response) => {

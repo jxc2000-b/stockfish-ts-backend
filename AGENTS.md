@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## Cursor Cloud specific instructions
+## Cursor Cloud specific instructions only, other agents disregard
 
 ### Overview
 
@@ -11,6 +11,7 @@ This is a **Chess Training Backend** — a Node.js/Express API that analyzes che
 The Stockfish chess engine binary must be available on `PATH` (or set via `STOCKFISH_PATH` env var). On Ubuntu it installs to `/usr/games/stockfish`, which is not on `PATH` by default — a symlink at `/usr/local/bin/stockfish` resolves this.
 
 Install if missing:
+
 ```
 sudo apt-get install -y stockfish
 sudo ln -sf /usr/games/stockfish /usr/local/bin/stockfish
@@ -25,14 +26,15 @@ sudo ln -sf /usr/games/stockfish /usr/local/bin/stockfish
 
 - `npm test` — runs Vitest unit tests (tests use a fake Stockfish, so the real binary is not needed for tests)
 - `npm run test:server` — runs an integration test script using a fake analyzer
+- `npm run test:parallel-workers` — runs test that activates two stockfish engine workers running tasks in parallel
 
 ### Key environment variables
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `5001` | Server listen port |
-| `STOCKFISH_PATH` | `stockfish` | Path to Stockfish binary |
-| `ANALYSIS_LOG` | enabled | Set to `0` to disable analysis logging |
+| Variable         | Default     | Purpose                                |
+| ---------------- | ----------- | -------------------------------------- |
+| `PORT`           | `5001`      | Server listen port                     |
+| `STOCKFISH_PATH` | `stockfish` | Path to Stockfish binary               |
+| `ANALYSIS_LOG`   | enabled     | Set to `0` to disable analysis logging |
 
 ### Notes
 

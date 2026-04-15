@@ -132,11 +132,66 @@ export interface AnalyzeGamesOptions {
   errorThreshold?: number;
   multiPv?: number;
   playerName?: string;
+  onProgress?: (update: AnalysisProgressUpdate) => void;
 }
 
 export interface AnalyzeGamesResult {
   analyzedMoves: AnalyzedMove[];
   trainingPositions: TrainingPosition[];
+}
+
+export interface AnalysisProgressUpdate {
+  stage: 'analyzing';
+  processedMoves: number;
+  totalMoves: number;
+  currentGame: string;
+  message: string;
+}
+
+function getTrackedReplyMove(game: ParsedGame, moveIndex: number, trackedColor: 'white' | 'black' | null) {
+  if (!trackedColor) {
+    return null;
+  }
+
+  const nextMove = game.moves[moveIndex + 1];
+
+  if (!nextMove || nextMove.color !== trackedColor) {
+    return null;
+  }
+
+  return nextMove;
+}
+
+function shouldAnalyzeMove(
+  game: ParsedGame,
+  moveIndex: number,
+  trackedColor: 'white' | 'black' | null
+): boolean {
+  if (!trackedColor) {
+    return true;
+  }
+
+  const move = game.moves[moveIndex];
+
+  // In tracked-player mode, only analyze opponent plies that could immediately
+  // become a user-to-move training position on the next ply.
+  return move.color !== trackedColor && Boolean(getTrackedReplyMove(game, moveIndex, trackedColor));
+}
+
+function countMovesToAnalyze(games: ParsedGame[], playerName: string): number {
+  return games.reduce((sum, game) => {
+    const trackedColor = getTrackedColor(game, playerName);
+
+    if (normalizePlayerName(playerName) && !trackedColor) {
+      return sum;
+    }
+
+    return sum + game.moves.filter((_, index) => shouldAnalyzeMove(game, index, trackedColor)).length;
+  }, 0);
+}
+
+function formatCurrentGameLabel(game: ParsedGame, gameIndex: number, totalGames: number): string {
+  return `Game ${gameIndex + 1}/${totalGames}: ${game.white} vs ${game.black}`;
 }
 
 export async function analyzeGames(
@@ -147,22 +202,22 @@ export async function analyzeGames(
     errorThreshold = DEFAULT_ERROR_THRESHOLD,
     multiPv = DEFAULT_MULTIPV,
     playerName = '',
+    onProgress,
   }: AnalyzeGamesOptions = {}
 ): Promise<AnalyzeGamesResult> {
   const analyzedMoves: AnalyzedMove[] = [];
   const trainingPositions: TrainingPosition[] = [];
-  const totalMoves: number = games.reduce((sum, game) => {
-    const trackedColor = getTrackedColor(game, playerName);
-
-    if (normalizePlayerName(playerName) && !trackedColor) {
-      return sum;
-    }
-
-    return sum + game.moves.length;
-  }, 0);
+  const totalMoves: number = countMovesToAnalyze(games, playerName);
   let nextAnalyzedMoveId = 1;
   let nextTrainingPositionId = 1;
   let processedMoves = 0;
+
+  const reportProgress = (update: Omit<AnalysisProgressUpdate, 'stage'>): void => {
+    onProgress?.({
+      stage: 'analyzing',
+      ...update,
+    });
+  };
 
   logAnalysis(
     `start games=${games.length} totalMoves=${totalMoves} depth=${depth} multipv=${multiPv} threshold=${errorThreshold}${
@@ -170,10 +225,17 @@ export async function analyzeGames(
     }`
   );
 
+  reportProgress({
+    processedMoves,
+    totalMoves,
+    currentGame: '',
+    message: totalMoves > 0 ? 'Preparing engine analysis.' : 'No matching moves to analyze.',
+  });
+
   for (const [gameIndex, game] of games.entries()) {
     const sourceGameMetadata: SourceGameMetadata = buildSourceGameMetadata(game);
     const trackedColor = getTrackedColor(game, playerName);
-    let previousAnalyzedMove: AnalyzedMove | null = null;
+    const currentGame: string = formatCurrentGameLabel(game, gameIndex, games.length);
 
     if (normalizePlayerName(playerName) && !trackedColor) {
       logAnalysis(
@@ -188,11 +250,30 @@ export async function analyzeGames(
       }`
     );
 
-    for (const move of game.moves) {
-      processedMoves += 1;
+    reportProgress({
+      processedMoves,
+      totalMoves,
+      currentGame,
+      message: `Scanning ${currentGame}.`,
+    });
+
+    for (const [moveIndex, move] of game.moves.entries()) {
+      if (!shouldAnalyzeMove(game, moveIndex, trackedColor)) {
+        continue;
+      }
+
+      const trackedReplyMove = getTrackedReplyMove(game, moveIndex, trackedColor);
+      const moveNumber: number = processedMoves + 1;
+
+      reportProgress({
+        processedMoves,
+        totalMoves,
+        currentGame,
+        message: `Analyzing move ${moveNumber} of ${totalMoves}.`,
+      });
 
       logAnalysis(
-        `move ${processedMoves}/${totalMoves} game=${gameIndex + 1}/${games.length} ply=${move.plyIndex}/${game.moves.length} color=${move.color} played=${move.san}`
+        `move ${moveNumber}/${totalMoves} game=${gameIndex + 1}/${games.length} ply=${move.plyIndex}/${game.moves.length} color=${move.color} played=${move.san}`
       );
 
       const preMoveAnalysis: AnalysisResult = await analyzePosition({
@@ -271,25 +352,29 @@ export async function analyzeGames(
         } loss=${evalLoss ?? 'n/a'} severity=${severity}`
       );
 
-      if (
-        trackedColor &&
-        move.color === trackedColor &&
-        previousAnalyzedMove?.color !== trackedColor &&
-        typeof previousAnalyzedMove?.evalLoss === 'number' &&
-        previousAnalyzedMove.evalLoss >= errorThreshold
-      ) {
+      if (trackedReplyMove && typeof evalLoss === 'number' && evalLoss >= errorThreshold) {
+        // Only after an opponent blunder clears the threshold do we analyze the
+        // resulting user-to-move position to build the actual training puzzle.
+        const trackedReplyAnalysis: AnalysisResult = await analyzePosition({
+          command: 'go',
+          fen: trackedReplyMove.fenBeforeMove,
+          depth,
+          multiPv,
+          analysisLabel: `${game.id} ply ${trackedReplyMove.plyIndex} reply ${trackedReplyMove.san}`,
+        });
+
         trainingPositions.push({
           id: `training-position-${nextTrainingPositionId++}`,
           analyzedMoveId: analyzedMove.id,
-          fen: move.fenBeforeMove,
-          correctMove: preMoveAnalysis.bestMove!,
-          correctMoveSan: analyzedMove.bestMoveSan,
-          playedMove: move.san,
-          playedMoveUci: move.uci,
-          evalLoss: previousAnalyzedMove.evalLoss,
-          severity: previousAnalyzedMove.severity,
-          principalVariation: preMoveAnalysis.principalVariation,
-          multiPv: preMoveAnalysis.multiPv,
+          fen: trackedReplyMove.fenBeforeMove,
+          correctMove: trackedReplyAnalysis.bestMove!,
+          correctMoveSan: uciToSan(trackedReplyMove.fenBeforeMove, trackedReplyAnalysis.bestMove),
+          playedMove: trackedReplyMove.san,
+          playedMoveUci: trackedReplyMove.uci,
+          evalLoss,
+          severity,
+          principalVariation: trackedReplyAnalysis.principalVariation,
+          multiPv: trackedReplyAnalysis.multiPv,
           sourceGameMetadata,
         });
       } else if (!trackedColor && typeof evalLoss === 'number' && evalLoss >= errorThreshold) {
@@ -309,7 +394,14 @@ export async function analyzeGames(
         });
       }
 
-      previousAnalyzedMove = analyzedMove;
+      processedMoves += 1;
+
+      reportProgress({
+        processedMoves,
+        totalMoves,
+        currentGame,
+        message: `Processed move ${processedMoves} of ${totalMoves}.`,
+      });
     }
   }
 

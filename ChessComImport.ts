@@ -116,10 +116,8 @@ function gameIncludesPlayer(game: ChessComGame, username: string): boolean {
 export function filterMonthlyArchiveGames(
   games: ChessComGame[],
   username: string,
-  timeControls: string[] = [DEFAULT_TIME_CONTROL]
+  _timeControls: string[] = [DEFAULT_TIME_CONTROL]
 ): ChessComGame[] {
-  const normalizedTimeControls = normalizeTimeControls(timeControls);
-
   return games.filter((game) => {
     if (!gameIncludesPlayer(game, username)) {
       return false;
@@ -129,11 +127,11 @@ export function filterMonthlyArchiveGames(
       return false;
     }
 
-    const gameTimeControl = String(game?.time_class || '')
+    const gameTimeClass = String(game?.time_class || '')
       .trim()
-      .toLowerCase() as SupportedTimeControl;
+      .toLowerCase();
 
-    if (!gameTimeControl || !normalizedTimeControls.includes(gameTimeControl)) {
+    if (!gameTimeClass || gameTimeClass === 'daily') {
       return false;
     }
 
@@ -159,20 +157,17 @@ export function createSyntheticPgnFile({
   username,
   archiveUrl,
   games,
-  timeControls = [DEFAULT_TIME_CONTROL],
 }: {
   username: string;
   archiveUrl: string;
   games: ChessComGame[];
-  timeControls?: string[];
 }): MulterLikeFile {
   const monthLabel = getArchiveMonthLabel(archiveUrl);
   const normalizedUsername = normalizeChessComUsername(username);
-  const normalizedTimeControlLabel = normalizeTimeControls(timeControls).join('-');
   const joinedPgn = games.map((game) => String(game.pgn || '').trim()).filter(Boolean).join('\n\n');
 
   return {
-    originalname: `chesscom-${normalizedUsername}-${normalizedTimeControlLabel}-${monthLabel}.pgn`,
+    originalname: `chesscom-${normalizedUsername}-${monthLabel}.pgn`,
     buffer: Buffer.from(joinedPgn, 'utf8'),
   };
 }
@@ -238,16 +233,6 @@ export async function importChessComGames({
     throw createChessComImportError('Unsupported month window.');
   }
 
-  if (
-    normalizedTimeControls.some(
-      (value) => !SUPPORTED_TIME_CONTROLS.includes(value as SupportedTimeControl)
-    )
-  ) {
-    throw createChessComImportError('Unsupported Chess.com time control.');
-  }
-
-  const supportedTimeControls = normalizedTimeControls as SupportedTimeControl[];
-
   const archivesPayload = (await fetchChessComJson(buildArchivesUrl(normalizedUsername), {
     fetchFn,
   })) as ChessComArchivesPayload;
@@ -278,7 +263,6 @@ export async function importChessComGames({
         username: normalizedUsername,
         archiveUrl,
         games: matchingGames,
-        timeControls: supportedTimeControls,
       })
     );
     selectedArchiveUrls.push(archiveUrl);
@@ -290,12 +274,12 @@ export async function importChessComGames({
       files,
       selectedArchiveUrls,
       importedGamesCount,
-      timeControls: supportedTimeControls,
+      timeControls: [],
     };
   }
 
   throw createChessComImportError(
-    `No ${supportedTimeControls.join(' / ')} chess games were found for "${normalizedUsername}" in the last ${monthsBack} month${
+    `No non-daily chess games were found for "${normalizedUsername}" in the last ${monthsBack} month${
       monthsBack === 1 ? '' : 's'
     }.`,
     400

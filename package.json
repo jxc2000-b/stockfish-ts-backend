@@ -7,6 +7,7 @@
     "start": "tsx server.ts",
     "test": "vitest run",
     "test:server": "tsx test-server.ts",
+    "test:parallel-workers": "node --import tsx test-parallel-workers.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
