@@ -1,3 +1,4 @@
+import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
@@ -120,6 +121,12 @@ const trainingAttemptBodySchema = z.object({
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error.';
 }
+
+app.use(cors({
+  origin: process.env.CLIENT_ORIGIN,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 app.use(express.json());
 
